@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>Player Estabilizado - Proporción Natural</title>
+
+  <script src="//cdn.jsdelivr.net/npm/@clappr/player@0.4.7/dist/clappr.min.js"></script>
+  <script src="//cdn.jsdelivr.net/npm/cdnbye@latest/dist/hlsjs-p2p-engine.min.js"></script>
+  <script src="//cdn.jsdelivr.net/npm/cdnbye@latest/dist/clappr-plugin.min.js"></script>
+
+  <style>
+    :root { --max-width: 960px; }
+    
+    html, body { 
+      width: 100%; height: 100%; margin: 0; padding: 0;
+      background: #000; overflow: hidden !important; 
+      display: flex; align-items: center; justify-content: center;
+    }
+    
+    /* Contenedor principal */
+    .player-container {
+      width: 100%;
+      max-width: var(--max-width);
+      position: relative;
+      background: #000;
+      aspect-ratio: 16/9;
+      display: block;
+    }
+
+    /* FIX: Cuando entra en Fullscreen, eliminamos restricciones */
+    .player-container:fullscreen,
+    .player-container:-webkit-full-screen {
+      max-width: none !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      background: #000 !important;
+    }
+
+    /* El video se ajusta al contenedor sin desbordar */
+    #player, #player video {
+      width: 100% !important;
+      height: 100% !important;
+      /* 'contain' mantiene la proporción natural sin recortes */
+      object-fit: contain !important; 
+      position: absolute;
+      top: 0; left: 0;
+    }
+
+    /* Limpieza de basura */
+    .clappr-overlay, .ad-overlay { display: none !important; }
+
+    /* Estilo para el cartel de orientación */
+    #orientation-hint {
+      position: fixed; bottom: 20px; left: 50%;
+      transform: translateX(-50%);
+      color: #fff; background: rgba(0,0,0,0.8);
+      padding: 12px 24px; border-radius: 30px;
+      font-family: sans-serif; display: none; z-index: 9999;
+    }
+    #orientation-hint.show { display: block; }
+  </style>
+</head>
+<body>
+
+  <div id="player-wrapper" class="player-container">
+    <div id="player"></div>
+  </div>
+
+  <div id="orientation-hint">Toca para girar la pantalla</div>
+
+  <script>
+    var STREAM_URL = "https://cors-proxy.wangzhishi.net/https://tvfuego.cdn.rcs.net.ar/HGxWMSZtXcn2A3b9zrDfUL/uw45tuta52qit00000079809ua4g9xrn_hls/playlist.m3u8";
+
+    var player = new Clappr.Player({
+      source: STREAM_URL,
+      parentId: "#player",
+      autoPlay: true,
+      width: "100%",
+      height: "100%",
+      plugins: [CDNByeClapprPlugin],
+      playback: {
+        playInline: true,
+        hlsjsConfig: { p2pConfig: { live: true } }
+      }
+    });
+
+    var wrapper = document.getElementById('player-wrapper');
+    var hint = document.getElementById('orientation-hint');
+
+    // Doble toque para Fullscreen
+    wrapper.addEventListener('dblclick', function() {
+      if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+        if (wrapper.requestFullscreen) wrapper.requestFullscreen();
+        else if (wrapper.webkitRequestFullscreen) wrapper.webkitRequestFullscreen();
+      } else {
+        if (document.exitFullscreen) document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+      }
+    });
+
+    // Control de orientación automática
+    function handleFullscreen() {
+      var isFS = !!(document.fullscreenElement || document.webkitFullscreenElement);
+      if (isFS && screen.orientation && screen.orientation.lock) {
+        screen.orientation.lock('landscape').catch(function() {
+          hint.classList.add('show');
+        });
+      } else if (!isFS) {
+        if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
+        hint.classList.remove('show');
+      }
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreen);
+    document.addEventListener('webkitfullscreenchange', handleFullscreen);
+
+    // Si el usuario toca el cartel, intentamos forzarlo
+    hint.addEventListener('click', function() {
+        hint.classList.remove('show');
+    });
+
+    // Limpiador agresivo de basura inyectada
+    setInterval(function() {
+      var video = document.querySelector('#player video');
+      if (video) {
+        video.style.objectFit = 'contain';
+        video.controls = false;
+      }
+    }, 1000);
+  </script>
+</body>
+</html>
+
+estabilizador de tamaños y cifrador https://encrypthtmlaes256.edgeone.app/
