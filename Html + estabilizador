@@ -1,134 +1,455 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-
-  <script src="//cdn.jsdelivr.net/npm/@clappr/player@0.4.7/dist/clappr.min.js"></script>
-  <script src="//cdn.jsdelivr.net/npm/cdnbye@latest/dist/hlsjs-p2p-engine.min.js"></script>
-  <script src="//cdn.jsdelivr.net/npm/cdnbye@latest/dist/clappr-plugin.min.js"></script>
-
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>TV Coaxial Mode - HLS Full (WebRTC, STUN Google, ABR, Forzar HD)</title>
   <style>
-    :root { --max-width: 960px; }
-    
-    html, body { 
-      width: 100%; height: 100%; margin: 0; padding: 0;
-      background: #000; overflow: hidden !important; 
-      display: flex; align-items: center; justify-content: center;
-    }
-    
-    /* Contenedor principal */
-    .player-container {
-      width: 100%;
-      max-width: var(--max-width);
-      position: relative;
-      background: #000;
-      aspect-ratio: 16/9;
-      display: block;
+    html, body { margin:0; padding:0; width:100%; height:100%; background:#000; overflow:hidden; }
+    #player-container { position:fixed; inset:0; width:100vw; height:100vh; background:#000; z-index:9999; display:flex; align-items:center; justify-content:center; }
+    #webrtc-video, .clappr-video-container { max-width:100%; max-height:100%; width:100vw; height:100vh; background:#000; }
+    .clappr-video-container { pointer-events: auto !important; }
+    .clappr-video-container video { pointer-events: none; }
+
+    .marca-chini-layer {
+      position: absolute; top: 15px; right: 15px;
+      color: rgba(255,255,255,0.28); font-family: Arial, sans-serif;
+      font-size: 9px; font-weight: bold; letter-spacing: 1.5px;
+      text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+      z-index: 10010; pointer-events: none; text-transform: uppercase;
     }
 
-    /* FIX: Cuando entra en Fullscreen, eliminamos restricciones */
-    .player-container:fullscreen,
-    .player-container:-webkit-full-screen {
-      max-width: none !important;
-      width: 100vw !important;
-      height: 100vh !important;
-      background: #000 !important;
+    .ios-landscape {
+      transform: rotate(90deg); transform-origin: center center;
+      width: 100vh !important; height: 100vw !important;
+      position: fixed; top: 50%; left: 50%;
+      margin-top: -50vw; margin-left: -50vh; z-index: 10000;
     }
 
-    /* El video se ajusta al contenedor sin desbordar */
-    #player, #player video {
-      width: 100% !important;
-      height: 100% !important;
-      /* 'contain' mantiene la proporción natural sin recortes */
-      object-fit: contain !important; 
-      position: absolute;
-      top: 0; left: 0;
+    /* Ocultar barra de progreso / seek */
+    .media-control-layer .media-control-center-panel,
+    .media-control-layer .media-control-center-panel .progress,
+    .media-control-layer .media-control-center-panel .progress-bar,
+    .media-control-layer .media-control-center-panel .seekbar,
+    .media-control-layer .media-control-center-panel .time,
+    .media-control-layer .media-control-center-panel .position,
+    .media-control-layer .media-control-center-panel .duration {
+      display: none !important;
+      pointer-events: none !important;
+      visibility: hidden !important;
+      height: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
     }
 
-    /* Limpieza de basura */
-    .clappr-overlay, .ad-overlay { display: none !important; }
-
-    /* Estilo para el cartel de orientación */
-    #orientation-hint {
-      position: fixed; bottom: 20px; left: 50%;
-      transform: translateX(-50%);
-      color: #fff; background: rgba(0,0,0,0.8);
-      padding: 12px 24px; border-radius: 30px;
-      font-family: sans-serif; display: none; z-index: 9999;
+    .media-control-layer .media-control-container,
+    .media-control-layer .media-control,
+    .clappr-control,
+    .clappr-fullscreen,
+    .clappr-play,
+    .clappr-pause,
+    .clappr-volume {
+      pointer-events: auto !important;
+      visibility: visible !important;
+      display: inline-flex !important;
     }
-    #orientation-hint.show { display: block; }
+
+    .toast {
+      position: absolute; left: 50%; transform: translateX(-50%);
+      bottom: 18px; background: rgba(0,0,0,0.7); color:#fff;
+      padding:8px 12px; border-radius:8px; font-size:13px; z-index:10020;
+      display:none;
+    }
+
+    * { -webkit-tap-highlight-color: transparent; outline: none; -webkit-user-select: none; user-select: none; }
   </style>
 </head>
 <body>
-
-  <div id="player-wrapper" class="player-container">
-    <div id="player"></div>
+  <div id="player-container">
+    <video id="webrtc-video" autoplay playsinline muted style="display:none;"></video>
+    <div id="hls-player-placeholder"></div>
+    <div class="marca-chini-layer">PRODUCCIONES EL CHINI</div>
+    <div id="toast" class="toast" aria-hidden="true"></div>
   </div>
 
-  <div id="orientation-hint">Toca para girar la pantalla</div>
+  <!-- Clappr + plugin HLS (hls.js playback) -->
+  <script src="https://cdn.jsdelivr.net/gh/clappr/clappr@latest/dist/clappr.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/clappr/hlsjs-playback@latest/dist/hlsjs-playback.min.js"></script>
 
   <script>
-    var STREAM_URL = "https://cors-proxy.wangzhishi.net/https://tvfuego.cdn.rcs.net.ar/HGxWMSZtXcn2A3b9zrDfUL/uw45tuta52qit00000079809ua4g9xrn_hls/playlist.m3u8";
+  // ---------- CONFIG (STUNs de Google copiados al ICE_SERVERS) ----------
+  const SIGNALING_WS_URL = 'wss://signaling.example.com/ws';
 
-    var player = new Clappr.Player({
-      source: STREAM_URL,
-      parentId: "#player",
+  const HLS_SOURCE = 'https://5f700d5b2c46f.streamlock.net:443/canal9santacruz/canal9santacruz/playlist.m3u8';
+
+  // ICE_SERVERS ahora contiene solo STUNs de Google (tal como pediste)
+  const ICE_SERVERS = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' }
+  ];
+
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const isSmartTV = /SmartTV|SMART-TV|Tizen|Web0S|Roku|AppleTV|CrKey|Android TV|BRAVIA|HbbTV|NetCast|DTV|Smart-TV/i.test(navigator.userAgent);
+  const isSecure = location.protocol === 'https:' || location.hostname === 'localhost';
+
+  // ---------- Service Worker (opcional) ----------
+  (function registerServiceWorkerBlob() {
+    if (!('serviceWorker' in navigator) || !isSecure || isSmartTV) return;
+    const swCode = `
+      const INTERCEPT_PATTERNS = [/\\.m3u8$/, /\\.ts$/, /\\.m4s$/, /\\.m3u8\\?/];
+      function matches(url){ try{ return INTERCEPT_PATTERNS.some(r=>r.test(url)); }catch(e){return false;} }
+      self.addEventListener('install', e=>{ self.skipWaiting(); });
+      self.addEventListener('activate', e=>{ e.waitUntil(self.clients.claim()); });
+      self.addEventListener('fetch', event=>{
+        const req = event.request;
+        if (req.method !== 'GET') return;
+        if (!matches(req.url)) return;
+        event.respondWith(fetch(req));
+      });
+    `;
+    try {
+      const blob = new Blob([swCode], { type: 'text/javascript' });
+      const blobUrl = URL.createObjectURL(blob);
+      navigator.serviceWorker.register(blobUrl, { scope: './' })
+        .then(() => URL.revokeObjectURL(blobUrl))
+        .catch(() => URL.revokeObjectURL(blobUrl));
+    } catch (e) {}
+  })();
+
+  // ---------- hls.js config ----------
+  const hlsJsConfig = {
+    autoStartLoad: true,
+    capLevelToPlayerSize: true,
+    maxBufferLength: 30,
+    maxMaxBufferLength: 60,
+    liveSyncDurationCount: 3,
+    enableWorker: true,
+    debug: false,
+    abrEwmaFastLive: 3.0,
+    abrEwmaSlowLive: 9.0,
+    abrBandWidthFactor: 0.9,
+    abrBandWidthUpFactor: 0.8
+  };
+
+  // ---------- Player ----------
+  let player = null;
+  function initPlayer() {
+    if (player) return;
+    player = new Clappr.Player({
+      parentId: "#hls-player-placeholder",
+      plugins: [HlsjsPlayback],
+      source: HLS_SOURCE,
+      playback: { hlsjsConfig: hlsJsConfig },
       autoPlay: true,
-      width: "100%",
-      height: "100%",
-      plugins: [CDNByeClapprPlugin],
-      playback: {
-        playInline: true,
-        hlsjsConfig: { p2pConfig: { live: true } }
-      }
+      width: "100vw", height: "100vh",
+      disableVideoTagContextMenu: true
     });
 
-    var wrapper = document.getElementById('player-wrapper');
-    var hint = document.getElementById('orientation-hint');
+    player.on(Clappr.Events.PLAYER_READY, () => onPlayerReady());
+  }
 
-    // Doble toque para Fullscreen
-    wrapper.addEventListener('dblclick', function() {
-      if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-        if (wrapper.requestFullscreen) wrapper.requestFullscreen();
-        else if (wrapper.webkitRequestFullscreen) wrapper.webkitRequestFullscreen();
-      } else {
-        if (document.exitFullscreen) document.exitFullscreen();
-        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+  // ---------- Fullscreen + landscape ----------
+  async function applyLandscape(force = true) {
+    const container = document.getElementById("player-container");
+    if (force) {
+      if (!isIOS && screen.orientation && screen.orientation.lock) {
+        try {
+          if (player && player.core && !player.core.isFullscreen()) await player.core.toggleFullscreen();
+          await screen.orientation.lock("landscape");
+        } catch (e) {}
+      } else if (isIOS) {
+        container.classList.add("ios-landscape");
       }
-    });
+    } else {
+      if (!isIOS && screen.orientation && screen.orientation.unlock) {
+        try {
+          if (player && player.core && player.core.isFullscreen()) await player.core.exitFullscreen();
+          screen.orientation.unlock();
+        } catch (e) {}
+      }
+      if (isIOS) container.classList.remove("ios-landscape");
+    }
+  }
 
-    // Control de orientación automática
-    function handleFullscreen() {
-      var isFS = !!(document.fullscreenElement || document.webkitFullscreenElement);
-      if (isFS && screen.orientation && screen.orientation.lock) {
-        screen.orientation.lock('landscape').catch(function() {
-          hint.classList.add('show');
-        });
-      } else if (!isFS) {
-        if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
-        hint.classList.remove('show');
+  // ---------- Bind fullscreen control reliably ----------
+  function bindFullscreenButtonDirect() {
+    if (!player || !player.core) return;
+    const root = player.core.$el[0];
+    const selectors = ['.clappr-fullscreen','[data-action="fullscreen"]','[aria-label="Fullscreen"]','[aria-label="Pantalla completa"]'];
+    function attach(btn) {
+      if (!btn || btn.__landscapeBound) return;
+      btn.__landscapeBound = true;
+      btn.addEventListener('click', () => {
+        setTimeout(() => {
+          try { const isFs = player.core.isFullscreen && player.core.isFullscreen(); applyLandscape(isFs); } catch (e) {}
+        }, 60);
+      }, true);
+    }
+    selectors.forEach(sel => { const btn = root.querySelector(sel); if (btn) attach(btn); });
+    const obs = new MutationObserver(() => selectors.forEach(sel => { const btn = root.querySelector(sel); if (btn) attach(btn); }));
+    obs.observe(root, { childList: true, subtree: true });
+    document.addEventListener('fullscreenchange', () => { try { applyLandscape(!!document.fullscreenElement); } catch (e) {} });
+  }
+
+  // ---------- Interaction guards ----------
+  function attachInteractionGuardsImproved() {
+    const container = document.getElementById('player-container');
+    if (!container) return;
+    let lastTap = 0;
+    container.addEventListener('touchend', function(e) {
+      const currentTime = Date.now();
+      const tapLength = currentTime - lastTap;
+      lastTap = currentTime;
+      if (tapLength < 300 && tapLength > 0) {
+        if (player && player.core && player.core.isFullscreen && player.core.isFullscreen()) {
+          player.core.exitFullscreen().catch(()=>{}); applyLandscape(false);
+        } else { applyLandscape(true); }
+        e.preventDefault(); return;
       }
+      try { if (player && player.core && player.core.$el) player.core.$el[0].dispatchEvent(new MouseEvent('mousemove',{bubbles:true})); } catch(e){}
+    }, { passive: false });
+
+    container.addEventListener('click', function(e) {
+      const target = e.target;
+      const isControl = target.closest && (target.closest('.media-control') || target.closest('.media-control-layer') || target.closest('.clappr-control') || target.closest('.clappr-fullscreen'));
+      if (isControl) return;
+      const videoEl = document.querySelector('#webrtc-video') || document.querySelector('#hls-player-placeholder video');
+      if (videoEl && videoEl.paused) videoEl.play().catch(()=>{});
+    }, true);
+  }
+
+  // ---------- Latency hunter (HLS) ----------
+  function startLatencyHunter(playerInstance) {
+    const video = playerInstance.core.$el.find('video')[0];
+    if (!video) return;
+    const intervalMs = 300;
+    const id = setInterval(() => {
+      try {
+        if (video.seekable && video.seekable.length) {
+          const liveEdge = video.seekable.end(video.seekable.length - 1);
+          const delay = liveEdge - video.currentTime;
+          if (delay > 1.2) video.playbackRate = 1.15;
+          else if (delay <= 0.8) video.playbackRate = 1.0;
+        }
+      } catch (e) {}
+    }, intervalMs);
+    playerInstance.on(Clappr.Events.PLAYER_DESTROY, () => clearInterval(id));
+  }
+
+  // ---------- ABR agresivo y forzar HD (hls.js) ----------
+  function setupAggressiveAbrAndForceHd(playerInstance) {
+    const playback = playerInstance.core.getCurrentPlayback();
+    const hls = (playback && (playback._hls || playback.hls || (playback.playback && playback.playback._hls))) || null;
+    const videoEl = playerInstance.core.$el.find('video')[0];
+    if (!hls || !videoEl) return;
+
+    const CHECK_INTERVAL_MS = 400;
+    const UPGRADE_SAFETY_FACTOR = 1.05;
+    const UPGRADE_BUFFER_THRESHOLD = 0.9;
+    const DOWNGRADE_BUFFER_THRESHOLD = 0.4;
+    const MAX_UPGRADE_STEP = 5;
+    const MIN_TIME_BETWEEN_ACTIONS_MS = 800;
+
+    function getSortedLevels() {
+      const levels = hls.levels || [];
+      const mapped = levels.map((l, idx) => ({ idx, bitrate: l.bitrate || 0 }));
+      mapped.sort((a,b) => a.bitrate - b.bitrate);
+      return mapped;
     }
 
-    document.addEventListener('fullscreenchange', handleFullscreen);
-    document.addEventListener('webkitfullscreenchange', handleFullscreen);
+    function forceHighestLevel() {
+      try {
+        const levels = hls.levels || [];
+        if (!levels.length) return;
+        let bestIdx = 0;
+        for (let i = 0; i < levels.length; i++) {
+          if ((levels[i].bitrate || 0) > (levels[bestIdx].bitrate || 0)) bestIdx = i;
+        }
+        hls.loadLevel = bestIdx;
+        hls.autoLevelEnabled = false;
+      } catch (e) {}
+    }
 
-    // Si el usuario toca el cartel, intentamos forzarlo
-    hint.addEventListener('click', function() {
-        hint.classList.remove('show');
+    forceHighestLevel();
+
+    let lastActionTime = 0;
+    const intervalId = setInterval(() => {
+      try {
+        const estimatedBandwidth = hls.bandwidthEstimate || (hls.stats && hls.stats.bwEstimate) || 0;
+        let bufferLevel = 0;
+        if (videoEl.buffered && videoEl.buffered.length) {
+          const current = videoEl.currentTime;
+          const end = videoEl.buffered.end(videoEl.buffered.length - 1);
+          bufferLevel = Math.max(0, end - current);
+        }
+
+        const sorted = getSortedLevels();
+        if (!sorted.length) return;
+        const curLevel = (typeof hls.currentLevel === 'number') ? hls.currentLevel : -1;
+        const curPos = sorted.findIndex(s => s.idx === curLevel);
+        let targetPos = curPos >= 0 ? curPos : 0;
+
+        for (let i = sorted.length - 1; i >= 0; i--) {
+          const bw = sorted[i].bitrate || 0;
+          if (estimatedBandwidth >= bw / UPGRADE_SAFETY_FACTOR) { targetPos = i; break; }
+        }
+
+        const now = Date.now();
+        if (now - lastActionTime < MIN_TIME_BETWEEN_ACTIONS_MS) return;
+
+        if (bufferLevel <= DOWNGRADE_BUFFER_THRESHOLD && targetPos < curPos) {
+          const targetIdx = sorted[targetPos].idx;
+          hls.loadLevel = targetIdx;
+          hls.autoLevelEnabled = false;
+          lastActionTime = now;
+          return;
+        }
+
+        if (bufferLevel >= UPGRADE_BUFFER_THRESHOLD && targetPos > curPos) {
+          const nextPos = Math.min(sorted.length - 1, (curPos >= 0 ? curPos : 0) + MAX_UPGRADE_STEP);
+          const chosenPos = Math.min(nextPos, targetPos);
+          const chosenIdx = sorted[chosenPos].idx;
+          if (chosenIdx !== (hls.currentLevel || 0)) {
+            hls.loadLevel = chosenIdx;
+            hls.autoLevelEnabled = false;
+            lastActionTime = now;
+          }
+          return;
+        }
+
+        if (targetPos < curPos) {
+          const targetIdx = sorted[targetPos].idx;
+          hls.loadLevel = targetIdx;
+          hls.autoLevelEnabled = false;
+          lastActionTime = now;
+          return;
+        }
+
+        if (estimatedBandwidth > (sorted[sorted.length-1].bitrate || 0) * 0.9) {
+          forceHighestLevel();
+          lastActionTime = now;
+        }
+      } catch (err) {}
+    }, CHECK_INTERVAL_MS);
+
+    const levelsObserver = setInterval(() => {
+      try { forceHighestLevel(); } catch (e) {}
+    }, 1500);
+
+    playerInstance.on(Clappr.Events.PLAYER_DESTROY, () => { clearInterval(intervalId); clearInterval(levelsObserver); });
+  }
+
+  // ---------- WebRTC (con STUNs de Google) ----------
+  let pc = null;
+  let ws = null;
+  const webrtcVideo = document.getElementById('webrtc-video');
+
+  async function startWebRTC() {
+    if (!('RTCPeerConnection' in window)) { initPlayer(); return; }
+    if (!SIGNALING_WS_URL || SIGNALING_WS_URL.includes('SIGNALING_WS_URL')) { initPlayer(); return; }
+
+    try { ws = new WebSocket(SIGNALING_WS_URL); } catch (e) { initPlayer(); return; }
+
+    ws.addEventListener('open', () => {});
+    ws.addEventListener('message', async (evt) => {
+      try {
+        const msg = JSON.parse(evt.data);
+        if (msg.type === 'offer') await handleOffer(msg);
+        else if (msg.type === 'candidate') { if (pc && msg.candidate) try { await pc.addIceCandidate(msg.candidate); } catch (e) {} }
+      } catch (e) {}
     });
 
-    // Limpiador agresivo de basura inyectada
-    setInterval(function() {
-      var video = document.querySelector('#player video');
-      if (video) {
-        video.style.objectFit = 'contain';
-        video.controls = false;
+    ws.addEventListener('close', () => { if (!webrtcVideo || webrtcVideo.style.display === 'none') initPlayer(); });
+    ws.addEventListener('error', () => initPlayer());
+
+    setTimeout(() => { if (!pc) initPlayer(); }, 3500);
+  }
+
+  async function handleOffer(msg) {
+    try {
+      pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    } catch (e) {
+      initPlayer();
+      return;
+    }
+
+    pc.addEventListener('track', (ev) => {
+      if (webrtcVideo) {
+        webrtcVideo.srcObject = ev.streams[0] || new MediaStream(ev.track ? [ev.track] : []);
+        webrtcVideo.style.display = 'block';
+        webrtcVideo.muted = false;
+        webrtcVideo.play().catch(()=>{});
+        if (player) { try { player.destroy(); player = null; document.getElementById('hls-player-placeholder').innerHTML = ''; } catch (e) {} }
       }
-    }, 1000);
+    });
+
+    pc.addEventListener('icecandidate', (e) => {
+      if (e.candidate && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'candidate', candidate: e.candidate }));
+      }
+    });
+
+    pc.addEventListener('connectionstatechange', () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+        if (webrtcVideo) { webrtcVideo.style.display = 'none'; webrtcVideo.srcObject = null; }
+        initPlayer();
+      }
+    });
+
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: msg.sdp }));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'answer', sdp: pc.localDescription.sdp }));
+    } catch (e) {
+      initPlayer();
+    }
+  }
+
+  // ---------- Player ready ----------
+  function onPlayerReady() {
+    const root = player.core.$el[0];
+
+    let lastTap = 0;
+    root.addEventListener('touchend', function(e) {
+      const currentTime = Date.now();
+      const tapLength = currentTime - lastTap;
+      if (tapLength < 300 && tapLength > 0) {
+        if (player && player.core && player.core.isFullscreen && player.core.isFullscreen()) { player.core.exitFullscreen().catch(()=>{}); applyLandscape(false); }
+        else { applyLandscape(true); }
+        e.preventDefault();
+      }
+      lastTap = currentTime;
+    }, { passive: false });
+
+    player.on(Clappr.Events.PLAYER_FULLSCREEN, (isFullscreen) => applyLandscape(isFullscreen));
+    bindFullscreenButtonDirect();
+
+    try { const ctrlLayer = root.querySelector('.media-control-layer'); if (ctrlLayer) ctrlLayer.style.pointerEvents = 'auto'; } catch(e){}
+
+    startLatencyHunter(player);
+
+    try { setupAggressiveAbrAndForceHd(player); } catch (e) {}
+
+    attachInteractionGuardsImproved();
+  }
+
+  // ---------- Boot ----------
+  (function boot() {
+    attachInteractionGuardsImproved();
+    startWebRTC();
+    setTimeout(() => { if (!player) initPlayer(); }, 3000);
+    if (isSmartTV) { try { document.documentElement.requestFullscreen().catch(()=>{}); } catch (e) {} }
+  })();
+
+  // ---------- Cleanup ----------
+  window.addEventListener('beforeunload', () => {
+    try { if (pc) pc.close(); } catch(e) {}
+    try { if (ws) ws.close(); } catch(e) {}
+    try { if (player) player.destroy(); } catch(e) {}
+  });
   </script>
 </body>
 </html>
-
-estabilizador de tamaños y cifrador https://encrypthtmlaes256.edgeone.app/
